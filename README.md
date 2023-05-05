@@ -9,7 +9,6 @@ npx hardhat compile
 npx hardhat test
 ```
 
-TODO @ygao: write deployment script
 ### Deploying Manually
 - Fund your wallet address with GoerliETH
 - Set your private key as an environment variable
