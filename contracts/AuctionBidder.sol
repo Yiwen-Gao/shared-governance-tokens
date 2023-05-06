@@ -2,14 +2,21 @@
 
 pragma solidity >=0.7.0 <0.9.0;
 
-import { IERC721 } from "@openzeppelin/contracts/interfaces/IERC721.sol";
-import { Auction, AuctionStorageV1, IAuction, Token } from "@zoralabs/nouns-protocol/dist/src/auction/Auction.sol";
+import { IAuction } from "@zoralabs/nouns-protocol/dist/src/auction/IAuction.sol";
+import { IToken } from "@zoralabs/nouns-protocol/dist/src/token/IToken.sol";
 import { console } from "hardhat/console.sol";
 
 enum AuctionState {
     ONGOING,
     WON,
     LOST
+}
+
+// unable to use `Auction` in "@zoralabs/nouns-protocol/dist/src/auction/Auction.sol"
+// because file imports `Token`, which exceeds contract size of 24KB and triggers compilation warning
+interface Auction is IAuction {
+    function token() external returns (IToken);
+    function auction() external returns (uint256, uint256, address, uint40, uint40, bool);
 }
 
 interface IAuctionBidder {
@@ -22,16 +29,15 @@ contract AuctionBidder is IAuctionBidder {
 
     Auction auction;
     AuctionState public state;
-    Token token;
     uint tokenID;
     address safe;
 
     constructor(address _auction, address _safe) {
+        console.log(_auction);
         auction = Auction(_auction);
         // TODO @ygao: update auction state
         state = AuctionState.ONGOING;
-        token = auction.token();
-        (tokenID, , , , ,) = auction.auction();
+        (tokenID, , , , , ) = auction.auction();
         safe = _safe;
     }
 
@@ -45,7 +51,7 @@ contract AuctionBidder is IAuctionBidder {
     }
 
     function transferToken() external override {
-        token.transferFrom(address(this), safe, tokenID);
+        (auction.token()).transferFrom(address(this), safe, tokenID);
     }
 
     // TODO @ygao: add receive or fallback to accept ETH
