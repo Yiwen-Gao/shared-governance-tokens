@@ -14,45 +14,72 @@ import {
     JBRedeemParamsData, 
     JBRedemptionDelegateAllocation
 } from "@jbx-protocol/juice-contracts-v3/contracts/interfaces/IJBFundingCycleDataSource.sol";
-import { AuctionBidder, AuctionState } from "./AuctionBidder.sol";
+import { IAuctionBidder } from "./AuctionBidder.sol";
+import { console } from "hardhat/console.sol";
 
 contract DataSource is IJBFundingCycleDataSource, IJBPayDelegate {
-    error NO_REDEMPTIONS_FOR_ONGOING_AUCTION();
-    error NO_PAYMENTS_FOR_SETTLED_AUCTION();
+    error NO_REDEMPTIONS_FOR_ACTIVE_BID();
     error INVALID_PAYMENT_EVENT();
+    error UNAUTHORIZED();
 
-    AuctionBidder bidder;
-    uint projectID;
+    address owner;
+    IAuctionBidder bidder;
+    uint projectId;
 
-    constructor(uint _projectID, address payable _bidder) {
-        projectID = _projectID;
-        bidder = AuctionBidder(_bidder);
+    constructor(uint _projectId, address _bidder) {
+        owner = msg.sender;
+        projectId = _projectId;
+        bidder = IAuctionBidder(_bidder);
     }
 
-    function payParams(JBPayParamsData calldata _data) external view override returns (uint256, string memory, JBPayDelegateAllocation[] memory) {
-        if (bidder.state() != AuctionState.ONGOING) {
-            revert NO_PAYMENTS_FOR_SETTLED_AUCTION();
+    function updateOwner(address _owner) external {
+        owner = _owner;
+    }
+
+    function payParams(JBPayParamsData calldata _data) external view override returns (
+        uint256 weight, 
+        string memory memo, 
+        JBPayDelegateAllocation[] memory allocations
+    ) {
+        if (msg.sender != owner) {
+            revert UNAUTHORIZED();
         }
-        JBPayDelegateAllocation[] memory allocations = new JBPayDelegateAllocation[](1);
+        weight = _data.weight;
+        memo = _data.memo;
+        allocations = new JBPayDelegateAllocation[](1);
         allocations[0] = JBPayDelegateAllocation({delegate: IJBPayDelegate(address(this)), amount: _data.amount.value});
-        return (_data.weight, _data.memo, allocations);
     }
 
-    // TODO @ygao: get funds back from bidder
-    function redeemParams(JBRedeemParamsData calldata _data) external view override returns (uint256, string memory, JBRedemptionDelegateAllocation[] memory) {
-        if (bidder.state() == AuctionState.ONGOING) {
-            revert NO_REDEMPTIONS_FOR_ONGOING_AUCTION();
+    // call refund in `redeemParams()` instead of `didRedeem()` 
+    // so that redemption request will fail if the bid is currently active
+    function redeemParams(JBRedeemParamsData calldata _data) external override returns (
+        uint256 reclaimAmount, 
+        string memory memo, 
+        JBRedemptionDelegateAllocation[] memory allocations
+    ) {
+        if (msg.sender != owner) {
+            revert UNAUTHORIZED();
         }
-        JBRedemptionDelegateAllocation[] memory allocations = new JBRedemptionDelegateAllocation[](1); 
+        if (bidder.hasHighestBid()) {
+            revert NO_REDEMPTIONS_FOR_ACTIVE_BID();
+        }
+        // move the requested amount from the bidder back to the project treasury
+        bidder.refundContribution(_data.reclaimAmount.value);
+
+        reclaimAmount = _data.reclaimAmount.value;
+        memo = _data.memo;
+        allocations = new JBRedemptionDelegateAllocation[](1);
         allocations[0] = JBRedemptionDelegateAllocation({
             delegate: IJBRedemptionDelegate(0x0000000000000000000000000000000000000000), 
             amount: _data.reclaimAmount.value
         });
-        return (_data.reclaimAmount.value, _data.memo, allocations);
     }
 
     function didPay(JBDidPayData calldata _data) external payable override {
-        if (projectID != _data.projectId) {
+        if (msg.sender != owner) {
+            revert UNAUTHORIZED();
+        }
+        if (projectId != _data.projectId) {
             revert INVALID_PAYMENT_EVENT();
         }
         
